@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>서울 한옥 스테이 레이더</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --border:#e5e7eb; --text:#1f2430; --sub:#6b7280;
+    --hot:#e8412c; --good:#1a9e5c; --ok:#d4a017; --low:#e08a2c; --poor:#9aa0ab;
+    --accent:#2c5cf6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);color:var(--text);}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px;}
+  header.top{text-align:center;margin-bottom:22px;}
+  header.top .icon{font-size:34px;}
+  header.top h1{font-size:26px;margin:6px 0 4px;}
+  header.top p{color:var(--sub);font-size:13px;margin:0;}
+
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:20px 0;}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 10px;text-align:center;}
+  .stat .num{font-size:20px;font-weight:700;}
+  .stat .lbl{font-size:11.5px;color:var(--sub);margin-top:2px;}
+  .stat.hot .num{color:var(--hot)} .stat.good .num{color:var(--good)}
+
+  .legend{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:12.5px;color:var(--sub);margin-bottom:18px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;}
+  .legend b{color:var(--text)}
+  .legend .chip{display:inline-flex;align-items:center;gap:4px;}
+
+  .filterbar{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:18px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+  .filterbar input[type=text]{flex:1;min-width:160px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;}
+  .filterbar select{padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;}
+  .chipbtn{padding:7px 12px;border-radius:20px;border:1px solid var(--border);background:#fff;font-size:12.5px;cursor:pointer;color:var(--sub);}
+  .chipbtn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .togglebtn{padding:7px 12px;border-radius:20px;border:1px solid var(--border);background:#fff;font-size:12.5px;cursor:pointer;color:var(--sub);}
+  .togglebtn.active{background:#fff7e6;border-color:#e0a800;color:#7a5400;}
+
+  .section-title{font-size:15px;font-weight:700;margin:26px 0 12px;}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:10px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:8px;text-decoration:none;color:var(--text);transition:transform .12s, box-shadow .12s;}
+  .card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.07);}
+  .card .rank{font-size:11px;color:var(--sub);}
+  .card .name{font-size:14.5px;font-weight:700;line-height:1.3;min-height:38px;}
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:20px;width:fit-content;}
+  .badge.hot{background:#fdeceA;color:var(--hot);}
+  .badge.good{background:#e7f7ee;color:var(--good);}
+  .badge.ok{background:#fcf3df;color:var(--ok);}
+  .badge.low{background:#fef0e2;color:var(--low);}
+  .badge.poor{background:#f1f2f4;color:var(--poor);}
+  .card .meta{font-size:12px;color:var(--sub);display:flex;flex-wrap:wrap;gap:8px;}
+  .card .tags{font-size:11px;color:var(--sub);}
+  .card .flags{display:flex;gap:4px;}
+  .flag{font-size:10.5px;background:#eef1ff;color:var(--accent);padding:2px 6px;border-radius:6px;font-weight:700;}
+
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;font-size:12.5px;}
+  thead th{background:#fafbfc;text-align:left;padding:10px 10px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap;color:var(--sub);font-weight:600;}
+  thead th:hover{color:var(--text);}
+  tbody td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+  tbody tr:hover{background:#fafbff;}
+  tbody tr:last-child td{border-bottom:none;}
+  .namecell{max-width:240px;}
+  .namecell a{color:var(--text);text-decoration:none;font-weight:600;}
+  .namecell a:hover{text-decoration:underline;color:var(--accent);}
+  .small{color:var(--sub);font-size:11px;}
+
+  .pagebar{display:flex;justify-content:center;align-items:center;gap:14px;margin:18px 0;font-size:13px;color:var(--sub);}
+  .pagebar button{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-size:13px;}
+  .pagebar button:disabled{opacity:.4;cursor:default;}
+
+  footer{text-align:center;color:var(--sub);font-size:12px;margin-top:36px;padding-top:18px;border-top:1px solid var(--border);}
+
+  @media (max-width:900px){
+    .stats{grid-template-columns:repeat(2,1fr);}
+    .cards{grid-template-columns:1fr;}
+    table{font-size:11.5px;}
+    .namecell{max-width:140px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="icon">🏠</div>
+    <h1>서울 한옥 스테이 레이더</h1>
+    <p>에어비앤비 한옥 스테이 250개 · 예약률 · 평점 · 후기 데이터 기반 분석</p>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="legend">
+    <span><b>예약률 등급 기준 (최근 30일)</b></span>
+    <span class="chip">🔥 초인기 90%+</span>
+    <span class="chip">✅ 인기 75~89%</span>
+    <span class="chip">💛 양호 60~74%</span>
+    <span class="chip">🟠 보통 40~59%</span>
+    <span class="chip">🔴 저조 40% 미만</span>
+  </div>
+
+  <div class="filterbar">
+    <input type="text" id="search" placeholder="숙소 이름 · 호스트 · 동(洞) 검색">
+    <select id="guFilter"><option value="">전체 구</option></select>
+    <select id="sortSel">
+      <option value="bookingRate_desc">예약률 높은순</option>
+      <option value="bookingRate_asc">예약률 낮은순</option>
+      <option value="rating_desc">별점 높은순</option>
+      <option value="reviews_desc">후기 많은순</option>
+    </select>
+    <div class="chips" id="tierChips"></div>
+    <button class="togglebtn" id="superhostBtn">슈퍼호스트만</button>
+    <button class="togglebtn" id="guestpickBtn">게스트 픽만</button>
+  </div>
+
+  <div class="section-title">🏆 예약률 TOP 추천 숙소</div>
+  <div class="cards" id="cards"></div>
+
+  <div class="section-title">📋 전체 매물 목록 <span id="countLabel" class="small"></span></div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th data-k="rank">#</th>
+        <th data-k="gu">구/동</th>
+        <th data-k="name">숙소 이름</th>
+        <th data-k="host">호스트</th>
+        <th data-k="rating">별점</th>
+        <th data-k="reviews">후기수</th>
+        <th data-k="bookingRate">예약률</th>
+        <th data-k="layout">구성</th>
+        <th data-k="link">링크</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <div class="pagebar">
+    <button id="prevBtn">← 이전</button>
+    <span id="pageLabel">1 / 1</span>
+    <button id="nextBtn">다음 →</button>
+  </div>
+
+  <footer>
+    서울 한옥 스테이 레이더 · 종로·성북·서대문·중구·동대문 · 에어비앤비 실시간 수집 데이터 · 분석 참고용
+  </footer>
+
+</div>
+
+<script>
+let DATA = [];
+let filtered = [];
+let page = 1;
+const PAGE_SIZE = 20;
+let activeTier = "";
+let onlySuperhost = false;
+let onlyGuestpick = false;
+
+const tierMeta = {
+  hot:  {label:"🔥 초인기", cls:"hot"},
+  good: {label:"✅ 인기",   cls:"good"},
+  ok:   {label:"💛 양호",   cls:"ok"},
+  low:  {label:"🟠 보통",   cls:"low"},
+  poor: {label:"🔴 저조",   cls:"poor"},
+};
+
+function rateNum(r){
+  if(!r) return -1;
+  return parseInt(r.replace('%',''));
+}
+
+async function load(){
+  const res = await fetch('./hanok_data.json');
+  DATA = await res.json();
+
+  const gus = [...new Set(DATA.map(d=>d.gu).filter(Boolean))].sort();
+  const guSel = document.getElementById('guFilter');
+  gus.forEach(g=>{
+    const o = document.createElement('option');
+    o.value = g; o.textContent = g;
+    guSel.appendChild(o);
+  });
+
+  const chipsEl = document.getElementById('tierChips');
+  const allBtn = mkChip('', '전체');
+  allBtn.classList.add('active');
+  chipsEl.appendChild(allBtn);
+  Object.entries(tierMeta).forEach(([k,v])=>{
+    chipsEl.appendChild(mkChip(k, v.label));
+  });
+
+  document.getElementById('search').addEventListener('input', render);
+  guSel.addEventListener('change', render);
+  document.getElementById('sortSel').addEventListener('change', render);
+  document.getElementById('superhostBtn').addEventListener('click', e=>{
+    onlySuperhost = !onlySuperhost;
+    e.target.classList.toggle('active', onlySuperhost);
+    render();
+  });
+  document.getElementById('guestpickBtn').addEventListener('click', e=>{
+    onlyGuestpick = !onlyGuestpick;
+    e.target.classList.toggle('active', onlyGuestpick);
+    render();
+  });
+  document.getElementById('prevBtn').addEventListener('click', ()=>{ page=Math.max(1,page-1); renderTable(); });
+  document.getElementById('nextBtn').addEventListener('click', ()=>{ page=page+1; renderTable(); });
+
+  document.querySelectorAll('#tbl thead th').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const k = th.dataset.k;
+      const map = {gu:'gu', name:'name', host:'host', rating:'rating', reviews:'reviews', bookingRate:'bookingRate', layout:'layout'};
+      if(!map[k]) return;
+      const sel = document.getElementById('sortSel');
+      if(k==='bookingRate') sel.value = sel.value==='bookingRate_desc' ? 'bookingRate_asc' : 'bookingRate_desc';
+      else if(k==='rating') sel.value = 'rating_desc';
+      else if(k==='reviews') sel.value = 'reviews_desc';
+      render();
+    });
+  });
+
+  render();
+}
+
+function mkChip(key, label){
+  const b = document.createElement('button');
+  b.className = 'chipbtn';
+  b.textContent = label;
+  b.addEventListener('click', ()=>{
+    activeTier = key;
+    document.querySelectorAll('.chipbtn').forEach(c=>c.classList.remove('active'));
+    b.classList.add('active');
+    render();
+  });
+  return b;
+}
+
+function applyFilters(){
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const gu = document.getElementById('guFilter').value;
+  filtered = DATA.filter(d=>{
+    if(gu && d.gu !== gu) return false;
+    if(activeTier && d.tier !== activeTier) return false;
+    if(onlySuperhost && !d.superhost) return false;
+    if(onlyGuestpick && !d.guestpick) return false;
+    if(q){
+      const blob = `${d.name||''} ${d.host||''} ${d.dong||''}`.toLowerCase();
+      if(!blob.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const sortVal = document.getElementById('sortSel').value;
+  const [key, dir] = sortVal.split('_');
+  filtered.sort((a,b)=>{
+    let av, bv;
+    if(key==='bookingRate'){ av=rateNum(a.bookingRate); bv=rateNum(b.bookingRate); }
+    else { av = a[key] ?? -1; bv = b[key] ?? -1; }
+    return dir==='desc' ? bv-av : av-bv;
+  });
+}
+
+function render(){
+  applyFilters();
+  page = 1;
+  renderStats();
+  renderCards();
+  renderTable();
+}
+
+function renderStats(){
+  const total = filtered.length;
+  const tierCount = k => filtered.filter(d=>d.tier===k).length;
+  const avg = (arr) => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : 0;
+  const ratings = filtered.map(d=>d.rating).filter(v=>typeof v==='number');
+  const rates = filtered.map(d=>rateNum(d.bookingRate)).filter(v=>v>=0);
+
+  const stats = [
+    {num: total, lbl: '전체 매물', cls:''},
+    {num: tierCount('hot'), lbl: '🔥 초인기 (90%+)', cls:'hot'},
+    {num: tierCount('good'), lbl: '✅ 인기 (75~89%)', cls:'good'},
+    {num: ratings.length ? avg(ratings).toFixed(2) : '-', lbl: '평균 별점', cls:''},
+    {num: rates.length ? Math.round(avg(rates))+'%' : '-', lbl: '평균 예약률', cls:''},
+  ];
+  document.getElementById('stats').innerHTML = stats.map(s=>`
+    <div class="stat ${s.cls}">
+      <div class="num">${s.num}</div>
+      <div class="lbl">${s.lbl}</div>
+    </div>`).join('');
+}
+
+function renderCards(){
+  const top = filtered.slice(0, 6);
+  document.getElementById('cards').innerHTML = top.map((d,i)=>{
+    const tm = tierMeta[d.tier] || {label:'정보없음', cls:'poor'};
+    const flags = [];
+    if(d.superhost) flags.push('<span class="flag">슈퍼호스트</span>');
+    if(d.guestpick) flags.push('<span class="flag">게스트픽</span>');
+    return `
+    <a class="card" href="${d.url}" target="_blank" rel="noopener">
+      <div class="rank">#${i+1} · ${d.gu||''} ${d.dong||''}</div>
+      <div class="name">${escapeHtml(d.name||'')}</div>
+      <span class="badge ${tm.cls}">${tm.label}${d.bookingRate? ' '+d.bookingRate : ''}</span>
+      <div class="meta">
+        <span>⭐ ${d.rating ?? '-'}</span>
+        <span>후기 ${d.reviews ?? '-'}건</span>
+        <span>최대 ${d.maxGuests ?? '-'}인</span>
+      </div>
+      <div class="tags">${escapeHtml(d.layout||'')}</div>
+      <div class="flags">${flags.join('')}</div>
+    </a>`;
+  }).join('') || '<div class="small">조건에 맞는 숙소가 없습니다.</div>';
+}
+
+function renderTable(){
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  page = Math.min(page, totalPages);
+  const start = (page-1)*PAGE_SIZE;
+  const rows = filtered.slice(start, start+PAGE_SIZE);
+
+  document.getElementById('countLabel').textContent = `(${filtered.length}개)`;
+  document.getElementById('tbody').innerHTML = rows.map((d,i)=>{
+    const tm = tierMeta[d.tier];
+    const badge = tm ? `<span class="badge ${tm.cls}">${tm.label}</span>` : '<span class="small">-</span>';
+    return `
+    <tr>
+      <td>${start+i+1}</td>
+      <td>${d.gu||''}<br><span class="small">${d.dong||''}</span></td>
+      <td class="namecell"><a href="${d.url}" target="_blank" rel="noopener">${escapeHtml(d.name||'')}</a></td>
+      <td>${escapeHtml(d.host||'-')}</td>
+      <td>⭐ ${d.rating ?? '-'}</td>
+      <td>${d.reviews ?? '-'}</td>
+      <td>${badge}<br>${d.bookingRate || '-'}</td>
+      <td class="small">${escapeHtml(d.layout||'-')}</td>
+      <td><a href="${d.url}" target="_blank" rel="noopener">바로가기 ↗</a></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('pageLabel').textContent = `${page} / ${totalPages}`;
+  document.getElementById('prevBtn').disabled = page<=1;
+  document.getElementById('nextBtn').disabled = page>=totalPages;
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+load();
+</script>
+</body>
+</html>
