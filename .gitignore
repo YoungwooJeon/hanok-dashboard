@@ -1,0 +1,4 @@
+_debug_archive/
+__pycache__/
+*.pyc
+한옥_분석_진행중.csv
