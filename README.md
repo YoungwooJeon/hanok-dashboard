@@ -6,40 +6,37 @@
 서울 5개 구(종로·중·성북·동대문·서대문)에 등록된 한옥 숙소를 전수조사하여
 가격, 예약률, 후기 등 운영 현황을 파악한다.
 
+## 폴더 구조
+
+```
+에어비앤비 분석/
+├── src/                  ← 소스 코드
+│   ├── step1_survey.py       Step 1: 한옥 숙소 목록 전수조사
+│   ├── step2_data.py         Step 2: 숙소별 상세 데이터 수집
+│   └── airbnb_scraper.py     초기 통합 스크래퍼 (참고용)
+├── output/               ← 수집 결과물
+│   ├── 한옥_목록.xlsx        Step 1 결과
+│   ├── 한옥_분석.xlsx        Step 2 결과
+│   └── airbnb_*.xlsx         전체/한옥 필터링 데이터
+├── dashboard/            ← 시각화
+│   └── index.html            한옥 스테이 레이더 대시보드
+├── _debug_archive/       ← 디버그 파일 (gitignore)
+├── Step1_프로젝트_지침.md
+└── 스크래퍼_실행.bat
+```
+
 ## 워크플로우
 
 ```
-Step 1 (step1_survey.py)
+Step 1 (src/step1_survey.py)
   → 서울 80개 행정동을 검색하여 한옥 숙소 목록 수집
-  → 출력: 한옥_목록.xlsx
+  → 출력: output/한옥_목록.xlsx
 
-Step 2 (step2_data.py)
+Step 2 (src/step2_data.py)
   → 한옥_목록.xlsx의 각 숙소별 상세 데이터 수집
   → 호스트 정보, 예약률, 후기, 가격 등
-  → 출력: 한옥_분석.xlsx
+  → 출력: output/한옥_분석.xlsx
+
+Dashboard (dashboard/index.html)
+  → 수집 데이터를 시각화하는 웹 대시보드
 ```
-
-## 핵심 파일
-
-| 파일 | 역할 |
-|------|------|
-| `step1_survey.py` | Step 1 — 한옥 숙소 목록 전수조사 |
-| `step2_data.py` | Step 2 — 숙소별 상세 데이터 수집 |
-| `airbnb_scraper.py` | 초기 통합 스크래퍼 (참고용, 레거시) |
-| `스크래퍼_실행.bat` | 실행 배치 파일 |
-
-## 산출물
-
-| 파일 | 내용 |
-|------|------|
-| `한옥_목록.xlsx` | Step 1 결과 — 한옥 숙소 리스트 |
-| `한옥_분석.xlsx` | Step 2 결과 — 상세 분석 데이터 |
-| `한옥_분석_진행중.csv` | Step 2 중간 저장 (재개용) |
-| `airbnb_서울_*.xlsx` | 전체 서울 숙소 데이터 (한옥 외 포함) |
-| `airbnb_한옥_*.xlsx` | 한옥 필터링 결과 |
-
-## 기타
-
-- `_debug_archive/` — 개발 중 생성된 디버그 파일 (삭제 가능)
-- `index.html` — 결과 시각화용 (있는 경우)
-- `Step1_프로젝트_지침.md` — Step 1 상세 지침서
