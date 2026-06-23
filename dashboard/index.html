@@ -114,9 +114,6 @@
     <button class="togglebtn" id="guestpickBtn">게스트 픽만</button>
   </div>
 
-  <div class="section-title">🏆 예약률 TOP 추천 숙소</div>
-  <div class="cards" id="cards"></div>
-
   <div class="section-title">📋 전체 매물 목록 <span id="countLabel" class="small"></span></div>
   <table id="tbl">
     <thead>
@@ -263,7 +260,6 @@ function render(){
   applyFilters();
   page = 1;
   renderStats();
-  renderCards();
   renderTable();
 }
 
