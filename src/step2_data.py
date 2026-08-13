@@ -60,6 +60,7 @@
 """
 
 import asyncio
+import base64
 import json
 import re
 from datetime import datetime, timedelta
@@ -199,6 +200,56 @@ def find_keys_containing(obj, substr_lower):
 #     예약 가능한 가장 가까운 날짜를 찾아 한 번 더 시도한다.
 # ============================================================
 
+def listing_id_matches(response, lid: str) -> bool:
+    """이 응답이 정말 lid 숙소의 것인지 확인한다.
+
+    ⚠ 2026-08-13 버그 수정의 핵심.
+      기존에는 캡처된 StaysPdpSections 응답을 '어느 숙소 것인지 확인 없이'
+      그대로 썼다. page_price 페이지는 모든 숙소가 공유하는데, 이전 숙소의
+      늦게 도착한 응답이 다음 숙소의 캡처 버퍼에 섞여 들어가면서 같은
+      가격이 수십~수백 행에 복사됐다(250행 중 고유값 5개).
+      → 요청 URL/본문에 listing id가 들어있는 응답만 신뢰한다.
+      Airbnb GraphQL은 variables에 raw id 또는 base64('StayListing:<id>')를 쓴다.
+    """
+    if not lid:
+        return False
+    b64 = base64.b64encode(f"StayListing:{lid}".encode()).decode().rstrip("=")
+    haystack = response.url or ""
+    try:
+        post = response.request.post_data
+        if post:
+            haystack += post
+    except Exception:
+        pass
+    return lid in haystack or b64 in haystack
+
+
+def _extract_won(text: str):
+    """가격 문자열에서 원화 금액만 뽑는다.
+
+    ⚠ 기존 코드는 re.search(r"[\\d,]+")로 '문자열의 첫 숫자'를 집었다.
+      그래서 '2박 ₩255,267' 같은 표기에서 박수 '2'를 가격으로 읽었다.
+      → ₩ / 원 기호에 붙은 4자리 이상 숫자만 채택하고, 할인 표기처럼
+        여러 금액이 섞이면 실제 지불액(작은 쪽)을 택한다.
+    """
+    if not text:
+        return None
+    cands = re.findall(r"[₩₩]\s*([\d,]{4,})", text)
+    if not cands:
+        cands = re.findall(r"([\d,]{4,})\s*원", text)
+    if not cands:
+        cands = re.findall(r"[\d,]{4,}", text)
+    vals = []
+    for c in cands:
+        try:
+            v = int(c.replace(",", ""))
+        except ValueError:
+            continue
+        if v >= 1000:
+            vals.append(v)
+    return min(vals) if vals else None
+
+
 def parse_price_from_sections(sections_list: list, nights: int = 1):
     """StaysPdpSections 응답들 안의 BookItSection에서 '예약 가능한' 가격을 추출.
     available=false(해당 날짜 예약 불가)인 섹션은 가격이 없으므로 건너뛴다."""
@@ -210,10 +261,10 @@ def parse_price_from_sections(sections_list: list, nights: int = 1):
             if not sdp:
                 continue
             line = sdp.get("primaryLine") or {}
-            price_text = line.get("price") or line.get("discountedPrice") or ""
-            m = re.search(r"[\d,]+", price_text)
-            if m:
-                total = int(m.group(0).replace(",", ""))
+            # 할인가가 있으면 실제 지불액을 우선한다
+            price_text = line.get("discountedPrice") or line.get("price") or ""
+            total = _extract_won(price_text)
+            if total:
                 return total // nights if nights else total
     return ""
 
@@ -247,16 +298,31 @@ def _find_available_window(calendar_json, today, nights: int = 1,
 
 
 async def fetch_price_for_dates(page, lid, checkin, checkout, nights: int = 1):
-    """가벼운 PDP 방문으로 특정 날짜의 1박 가격을 가져온다 (스크롤 없음)."""
+    """가벼운 PDP 방문으로 특정 날짜의 1박 가격을 가져온다 (스크롤 없음).
+
+    page는 모든 숙소가 공유하므로, 직전 숙소의 in-flight 응답이 이번 캡처에
+    섞이지 않도록 (1) about:blank로 먼저 끊고 (2) listing id가 일치하는
+    응답만 받는다. 또 고정 sleep 대신 가격이 잡힐 때까지 폴링한다 —
+    1.3초 안에 응답이 안 오면 조용히 빈 값이 되던 문제도 같이 해결된다.
+    """
     cap_sections = []
 
     async def on_resp(response):
-        if "StaysPdpSections" in response.url:
-            try:
-                cap_sections.append(await response.json())
-            except Exception:
-                pass
+        if "StaysPdpSections" not in response.url:
+            return
+        if not listing_id_matches(response, lid):
+            return
+        try:
+            cap_sections.append(await response.json())
+        except Exception:
+            pass
 
+    try:
+        await page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+    except Exception:
+        pass
+
+    price = ""
     page.on("response", on_resp)
     try:
         await page.goto(
@@ -264,13 +330,17 @@ async def fetch_price_for_dates(page, lid, checkin, checkout, nights: int = 1):
             f"?check_in={checkin}&check_out={checkout}&adults=1",
             wait_until="domcontentloaded", timeout=20000,
         )
-        await asyncio.sleep(1.3)
+        for _ in range(30):          # 최대 약 6초 대기
+            price = parse_price_from_sections(cap_sections, nights)
+            if isinstance(price, int):
+                break
+            await asyncio.sleep(0.2)
     except Exception:
         pass
     finally:
         page.remove_listener("response", on_resp)
 
-    return parse_price_from_sections(cap_sections, nights), cap_sections
+    return price, cap_sections
 
 
 # ============================================================
@@ -605,7 +675,10 @@ async def main():
 
             # ① 숙소 페이지 이동 — page_detail (호스트/구성/후기/캘린더 +
             #    CHECKIN~CHECKOUT 날짜의 BookItSection도 함께 캡처됨)
-            cap = {"sections_list": [], "reviews": None, "calendar": None}
+            # sections_list: 기존 파서(호스트/구성/어메니티)용 — 동작 검증된 경로라 그대로 둔다
+            # sections_verified: 가격 전용 — listing id가 확인된 응답만 담는다
+            cap = {"sections_list": [], "sections_verified": [],
+                   "reviews": None, "calendar": None}
 
             async def on_resp(response):
                 url = response.url
@@ -613,6 +686,8 @@ async def main():
                     if "StaysPdpSections" in url:
                         data = await response.json()
                         cap["sections_list"].append(data)
+                        if listing_id_matches(response, lid):
+                            cap["sections_verified"].append(data)
                     elif "StaysPdpReviewsQuery" in url and cap["reviews"] is None:
                         cap["reviews"] = await response.json()
                     elif "PdpAvailabilityCalendar" in url and cap["calendar"] is None:
@@ -656,7 +731,7 @@ async def main():
 
             # ② 가격 3종 — 기본 날짜로 시도 → 예약 불가능하면 캘린더에서
             #    실제로 예약 가능한 날짜를 찾아 page_price로 한 번 더 시도
-            pr1 = parse_price_from_sections(cap["sections_list"], NIGHTS)
+            pr1 = parse_price_from_sections(cap["sections_verified"], NIGHTS)
             if not isinstance(pr1, int):
                 ci, co = _find_available_window(cap["calendar"], today, nights=NIGHTS)
                 if ci:
@@ -757,6 +832,17 @@ async def main():
     priced = [r["1박_가격"] for r in results if isinstance(r.get("1박_가격"), int)]
     if priced:
         print(f"  평균 1박: ₩{sum(priced)//len(priced):,}")
+        # 무결성 검증 — 예전에 250행 중 고유값이 5개뿐인데도 아무 경고가 없어
+        # 잘못된 가격으로 몇 달간 분석했다. 같은 일이 반복되지 않도록 막는다.
+        uniq = len(set(priced))
+        print(f"  가격 고유값: {uniq}개 / {len(priced)}건")
+        if uniq < max(10, len(priced) * 0.3):
+            print("\n  " + "!" * 56)
+            print("  ⚠️  가격 데이터가 오염됐을 가능성이 매우 높습니다.")
+            print("      숙소마다 값이 달라야 하는데 고유값이 지나치게 적습니다.")
+            print("      가격 컬럼을 분석에 쓰지 마시고, debug2_price_*.json을")
+            print("      열어 응답이 요청한 숙소의 것인지 확인하세요.")
+            print("  " + "!" * 56)
 
     rates = [int(r["예약률_30일"].replace("%",""))
              for r in results if r.get("예약률_30일") and r["예약률_30일"] != ""]
