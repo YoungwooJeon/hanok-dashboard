@@ -5,11 +5,17 @@
 카테고리 분류, 월별 추이, TOP 영상 등을 엑셀 + 마크다운 요약으로 저장한다.
 
 설치:
-    pip install yt-dlp pandas openpyxl
+    pip install pandas openpyxl tabulate requests
+    pip install yt-dlp            # --backend ytdlp 사용 시에만 필요
 
 실행:
     python src/youtube_channel_analysis.py https://youtube.com/@theairbnbdataguy
-    python src/youtube_channel_analysis.py <채널URL> --limit 50   # 테스트용 일부만
+    python src/youtube_channel_analysis.py <채널URL> --limit 50        # 테스트용 일부만
+    python src/youtube_channel_analysis.py <채널URL> --backend ytdlp   # yt-dlp 사용
+
+백엔드:
+    innertube (기본) : 유튜브 내부 API(youtubei.googleapis.com)를 직접 호출. 채널 ID 또는 @핸들 필요.
+    ytdlp            : yt-dlp 라이브러리 사용 (www.youtube.com 접근 필요)
 
 출력:
     output/유튜브_채널_<핸들>.xlsx        (영상목록 / 카테고리별 / 월별 / TOP20 시트)
@@ -18,18 +24,20 @@
 """
 
 import argparse
+import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 try:
     import yt_dlp
-except ImportError:
-    print("yt-dlp가 없습니다:  pip install yt-dlp")
-    sys.exit(1)
+except ImportError:  # innertube 백엔드만 쓸 때는 없어도 된다
+    yt_dlp = None
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "output"
@@ -104,6 +112,222 @@ def fetch_video(ydl: "yt_dlp.YoutubeDL", vid: str) -> dict | None:
         "채널명": info.get("channel"),
         "구독자수": info.get("channel_follower_count"),
     }
+
+
+
+# ---------------------------------------------------------------------------
+# InnerTube 백엔드 (youtubei.googleapis.com)
+# ---------------------------------------------------------------------------
+INNERTUBE = "https://youtubei.googleapis.com/youtubei/v1"
+IT_CONTEXT = {"client": {"clientName": "WEB", "clientVersion": "2.20250101.00.00", "hl": "en", "gl": "US"}}
+IT_TAB_PARAMS = {"videos": "EgZ2aWRlb3PyBgQKAjoA", "shorts": "EgZzaG9ydHPyBgUKA5oBAA%3D%3D", "streams": "EgdzdHJlYW1z8gYECgJ6AA%3D%3D"}
+IT_SESSION = requests.Session()
+IT_SESSION.headers.update({"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+
+
+def it_post(endpoint: str, body: dict, retries: int = 3) -> dict:
+    for attempt in range(retries):
+        try:
+            r = IT_SESSION.post(f"{INNERTUBE}/{endpoint}?prettyPrint=false", json={"context": IT_CONTEXT, **body}, timeout=30)
+            if r.status_code == 200:
+                return r.json()
+            print(f"  HTTP {r.status_code} ({endpoint}) 재시도 {attempt + 1}/{retries}")
+        except requests.RequestException as e:
+            print(f"  요청 오류 ({endpoint}): {e} 재시도 {attempt + 1}/{retries}")
+        time.sleep(2 * (attempt + 1))
+    return {}
+
+
+def walk(obj, key: str):
+    """중첩 JSON에서 key를 가진 모든 값을 생성한다."""
+    if isinstance(obj, dict):
+        if key in obj:
+            yield obj[key]
+        for v in obj.values():
+            yield from walk(v, key)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from walk(v, key)
+
+
+def text_of(node) -> str:
+    if not node:
+        return ""
+    if isinstance(node, str):
+        return node
+    if "simpleText" in node:
+        return node["simpleText"]
+    if "runs" in node:
+        return "".join(r.get("text", "") for r in node["runs"])
+    if "content" in node and isinstance(node["content"], str):
+        return node["content"]
+    return ""
+
+
+def parse_count(s: str) -> int | None:
+    """'12.4K', '1,234', '510 views', 'No views' → 정수"""
+    if not s:
+        return None
+    m = re.search(r"([\d.,]+)\s*([KMB])?", s.replace("\u00a0", " "))
+    if not m:
+        return 0 if "No" in s else None
+    num = float(m.group(1).replace(",", ""))
+    mult = {"K": 1e3, "M": 1e6, "B": 1e9}.get(m.group(2) or "", 1)
+    return int(num * mult)
+
+
+def parse_length(s: str) -> int | None:
+    """'22:38' / '1:02:15' → 초"""
+    if not s or not re.fullmatch(r"[\d:]+", s):
+        return None
+    parts = [int(p) for p in s.split(":")]
+    total = 0
+    for p in parts:
+        total = total * 60 + p
+    return total
+
+
+def it_resolve_channel(channel_url: str) -> tuple[str, dict]:
+    """채널 URL → (browseId, 헤더 메타). @핸들이면 navigation/resolve_url로 변환."""
+    m = re.search(r"/channel/(UC[\w-]{22})", channel_url)
+    browse_id = m.group(1) if m else None
+    if not browse_id:
+        handle = "@" + slug_from_url(channel_url)
+        res = it_post("navigation/resolve_url", {"url": f"https://www.youtube.com/{handle}"})
+        browse_id = next(walk(res, "browseId"), None)
+        if not browse_id:
+            raise SystemExit(f"채널 ID를 찾지 못했습니다: {channel_url}")
+    home = it_post("browse", {"browseId": browse_id})
+    md = home.get("metadata", {}).get("channelMetadataRenderer", {})
+    header_text = json.dumps(home, ensure_ascii=False)
+    subs = re.search(r'"content": "([\d.,]+[KMB]?) subscribers"', header_text)
+    nvid = re.search(r'"content": "([\d.,]+[KMB]?) videos"', header_text)
+    meta = {
+        "채널명": md.get("title"),
+        "채널ID": browse_id,
+        "설명": md.get("description"),
+        "구독자수": parse_count(subs.group(1)) if subs else None,
+        "영상수(채널표시)": parse_count(nvid.group(1)) if nvid else None,
+    }
+    return browse_id, meta
+
+
+def it_list_videos(browse_id: str) -> dict[str, dict]:
+    """영상·쇼츠·라이브 탭을 continuation 끝까지 순회해 {videoId: 기본정보}를 만든다."""
+    found: dict[str, dict] = {}
+    for tab, params in IT_TAB_PARAMS.items():
+        data = it_post("browse", {"browseId": browse_id, "params": params})
+        page = 0
+        while data:
+            page += 1
+            new = 0
+            for item in walk(data, "richItemRenderer"):
+                s = json.dumps(item)
+                ids = re.findall(r'"(?:videoId|contentId)": "([\w-]{11})"', s)
+                if not ids:
+                    continue
+                vid = ids[0]
+                if vid in found:
+                    continue
+                badge = re.search(r'"thumbnailBadgeViewModel": \{"text": "([\d:]+)"', s)
+                title = ""
+                for t in walk(item, "title"):
+                    title = text_of(t)
+                    if title:
+                        break
+                if not title:
+                    # lockupViewModel: metadata.lockupMetadataViewModel.title.content
+                    mt = re.search(r'"lockupMetadataViewModel": \{"title": \{"content": "((?:[^"\\]|\\.)*)"', s)
+                    title = json.loads(f'"{mt.group(1)}"') if mt else ""
+                found[vid] = {"video_id": vid, "제목": title, "탭": tab, "길이(초)": parse_length(badge.group(1)) if badge else None}
+                new += 1
+            token = None
+            for c in walk(data, "continuationItemRenderer"):
+                token = next(walk(c, "token"), None)
+                if token:
+                    break
+            print(f"  [{tab}] {page}페이지: +{new} (누적 {len(found)})")
+            if not token or new == 0:
+                break
+            data = it_post("browse", {"continuation": token})
+            time.sleep(0.3)
+    return found
+
+
+def it_fetch_video(vid: str, base: dict) -> dict:
+    """next 엔드포인트로 업로드일·조회수·좋아요·댓글수·설명·태그를 채운다."""
+    d = it_post("next", {"videoId": vid})
+    row = {**base, "업로드일": None, "조회수": None, "좋아요": None, "댓글수": None, "태그": "", "설명": "", "URL": f"https://www.youtube.com/watch?v={vid}"}
+    if not d:
+        return row
+    for f in walk(d, "factoidRenderer"):
+        label = text_of(f.get("label")).lower()
+        acc = f.get("accessibilityText", "")
+        if "like" in label:
+            row["좋아요"] = parse_count(text_of(f.get("value")))
+        elif "view" in label:
+            row["조회수"] = parse_count(text_of(f.get("value")))
+        elif re.fullmatch(r"\d{4}", label):
+            try:
+                row["업로드일"] = datetime.strptime(acc, "%b %d, %Y").date()
+            except ValueError:
+                pass
+    for p in walk(d, "videoPrimaryInfoRenderer"):
+        if not row["제목"]:
+            row["제목"] = text_of(p.get("title"))
+        if row["조회수"] is None:
+            row["조회수"] = parse_count(text_of(next(walk(p.get("viewCount", {}), "viewCount"), None)))
+        if row["업로드일"] is None:
+            dt = text_of(p.get("dateText"))
+            m = re.search(r"([A-Z][a-z]{2} \d{1,2}, \d{4})", dt)
+            if m:
+                row["업로드일"] = datetime.strptime(m.group(1), "%b %d, %Y").date()
+        break
+    for sec in walk(d, "videoSecondaryInfoRenderer"):
+        row["설명"] = (text_of(sec.get("attributedDescription")) or "")[:1000]
+        break
+    for h in walk(d, "engagementPanelTitleHeaderRenderer"):
+        if "comment" in text_of(h.get("title")).lower():
+            row["댓글수"] = parse_count(text_of(h.get("contextualInfo")))
+            break
+    if row["길이(초)"] is None:
+        for ov in walk(d, "lengthText"):
+            row["길이(초)"] = parse_length(text_of(ov))
+            if row["길이(초)"]:
+                break
+    row["쇼츠"] = "Y" if base.get("탭") == "shorts" else ""
+    return row
+
+
+def collect_innertube(channel_url: str, limit: int | None, progress_csv: Path) -> tuple[pd.DataFrame, dict]:
+    browse_id, meta = it_resolve_channel(channel_url)
+    print(f"채널: {meta['채널명']} ({browse_id}) 구독자 {meta['구독자수']} / 영상 {meta['영상수(채널표시)']}")
+    done: dict[str, dict] = {}
+    if progress_csv.exists():
+        prev = pd.read_csv(progress_csv)
+        done = {r["video_id"]: r for r in prev.to_dict("records")}
+        print(f"이어서 수집: 이미 {len(done)}개 완료")
+    print("영상 목록 조회 중...")
+    listing = it_list_videos(browse_id)
+    ids = list(listing)
+    if limit:
+        ids = ids[:limit]
+    print(f"총 {len(ids)}개 영상 상세 수집")
+    rows = list(done.values())
+    for i, vid in enumerate(ids, 1):
+        if vid in done:
+            continue
+        row = it_fetch_video(vid, listing[vid])
+        row["채널명"] = meta["채널명"]
+        row["구독자수"] = meta["구독자수"]
+        rows.append(row)
+        print(f"  [{i}/{len(ids)}] {str(row['제목'])[:60]}  {row['업로드일']}  조회 {row['조회수']}")
+        if i % 10 == 0:
+            pd.DataFrame(rows).to_csv(progress_csv, index=False)
+        time.sleep(0.2)
+    df = pd.DataFrame(rows)
+    df.to_csv(progress_csv, index=False)
+    return df, meta
 
 
 def classify(title: str, tags: str) -> str:
@@ -217,6 +441,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="유튜브 채널 전수 분석")
     ap.add_argument("channel_url")
     ap.add_argument("--limit", type=int, default=None, help="테스트용: 앞에서 N개만 수집")
+    ap.add_argument("--backend", choices=["innertube", "ytdlp"], default="innertube")
     args = ap.parse_args()
 
     handle = slug_from_url(args.channel_url)
@@ -225,7 +450,12 @@ def main() -> None:
     xlsx_path = OUTPUT_DIR / f"유튜브_채널_{handle}.xlsx"
     md_path = OUTPUT_DIR / f"유튜브_채널_{handle}_요약.md"
 
-    df = collect(args.channel_url, args.limit, progress_csv)
+    if args.backend == "ytdlp":
+        if yt_dlp is None:
+            sys.exit("yt-dlp가 없습니다:  pip install yt-dlp")
+        df = collect(args.channel_url, args.limit, progress_csv)
+    else:
+        df, _meta = collect_innertube(args.channel_url, args.limit, progress_csv)
     if df.empty:
         print("수집된 영상이 없습니다.")
         sys.exit(1)
