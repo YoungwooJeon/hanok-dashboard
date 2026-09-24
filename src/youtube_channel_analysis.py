@@ -43,14 +43,22 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "output"
 
 # 카테고리 규칙: (카테고리명, 제목/태그에서 찾을 키워드 정규식)
-# 위에서부터 먼저 매칭되는 카테고리를 채택한다.
+# 위에서부터 먼저 매칭되는 카테고리를 채택한다. 쇼츠는 별도 규칙(SHORTS_RULES)을 쓴다.
 CATEGORY_RULES = [
-    ("A. 무료 강의 시리즈", r"course|part \d|lesson|module|bianchi method|basics|everything (you need|i know)"),
-    ("B. 시장 선정/랭킹", r"market|best place|top \d|cities|city|where to (buy|invest)|destroy|easiest|worst"),
-    ("C. 매물 분석 튜토리얼", r"airdna|analy[sz]e|analysis|tutorial|how to (find|use|read)|down to the penny|underwrit|valuation"),
-    ("D. 운영 최적화/수익", r"pricing|price|amenit|occupancy|revenue|revpar|listing|optimi|booking|guest|automation|host"),
-    ("E. 인사이트/트렌드", r"20\d\d|data nobody|truth|secret|mistake|is it still|dead|bust|saturat|regulation"),
-    ("F. 사례/브이로그/소식", r"consult|vlog|journey|my (story|plan)|update|becoming|tour|purchas"),
+    ("A. 무료 강의/코스", r"course|part \d|masterclass|workshop|webinar|starter pack|crash course|mini course|blueprint|trust the process"),
+    ("E. 세금/재무", r"\btax|depreciation|1031|loophole|beautiful bill|stocks"),
+    ("C. 툴 튜토리얼/매물 분석", r"airdna|rentalizer|bnbcalc|tutorial|analy[sz]|analysis|underwrit|comparable|predict|scorecard|how much|will (actually )?make|make(s)? you money|profitab|deal|5 step|4 step|step by step|quickly"),
+    ("B. 시장 선정/지역", r"market|saturat|location|city|cities|michigan|poconos|flagstaff|salt lake|louisville|indianapolis|atlanta|st\. augustine|legal|regulation|race"),
+    ("D. 운영/리스팅 최적화", r"amenit|photo|pricing|price|ranking|listing|revenue|design|booking|firepit|gameroom|algorithm|upgrade|makeover|compares you|furniture|budget|hostshare|stayamo|fix"),
+    ("F. 사례/인터뷰/스토리", r"client|story|how (he|she|this|these|allison|i (found|helped|taught))|made|earned|profiting|interview|chat|w/|best friend|ep\.|series|turns|couple|firefighter|doctor|consult|impressive|announcement|techvestor|expert|master|legend|queen|genuine|kory|brandon|avery|kenny|daniel|jeremy|ceo|founder|data nerds|journey|becoming"),
+    ("G. 인사이트/투자 논평", r"lesson|mistake|reason|wealth|rule|survive|saturation|should you|why|wrong|scared|vacation home|creative|boutique|rich|what happens|entrepreneur|landlord|lease|lead|co-host|arbitrage|contract|difficult|importan|cash flowing|cash-flowing"),
+]
+
+SHORTS_RULES = [
+    ("S1. 어메니티/디자인", r"amenit|design|hot tub|light|feature|build|inch|photograph|speakeasy|game|pool|room|property|properties|airbnb -|makes|home|house|cabin|beautiful|favorite"),
+    ("S2. 수익/사례 숫자", r"\$|\d+k|month|year|client|profit|cash|money|deal|revenue|cost"),
+    ("S3. 데이터/분석 팁", r"data|analy|tool|airdna|market|strategy|underwrit|research|number|key"),
+    ("S4. 의견/소통/일상", r"."),
 ]
 
 
@@ -231,14 +239,19 @@ def it_list_videos(browse_id: str) -> dict[str, dict]:
                     continue
                 badge = re.search(r'"thumbnailBadgeViewModel": \{"text": "([\d:]+)"', s)
                 title = ""
-                for t in walk(item, "title"):
-                    title = text_of(t)
-                    if title:
-                        break
-                if not title:
-                    # lockupViewModel: metadata.lockupMetadataViewModel.title.content
+                if "shortsLockupViewModel" in item.get("content", item):
+                    # 쇼츠: overlayMetadata.primaryText.content 가 제목
+                    mt = re.search(r'"primaryText": \{"content": "((?:[^"\\]|\\.)*)"', s)
+                    title = json.loads(f'"{mt.group(1)}"') if mt else ""
+                else:
+                    # 일반 영상: metadata.lockupMetadataViewModel.title.content
                     mt = re.search(r'"lockupMetadataViewModel": \{"title": \{"content": "((?:[^"\\]|\\.)*)"', s)
                     title = json.loads(f'"{mt.group(1)}"') if mt else ""
+                    if not title:
+                        for t in walk(item, "title"):
+                            title = text_of(t)
+                            if title:
+                                break
                 found[vid] = {"video_id": vid, "제목": title, "탭": tab, "길이(초)": parse_length(badge.group(1)) if badge else None}
                 new += 1
             token = None
@@ -273,8 +286,7 @@ def it_fetch_video(vid: str, base: dict) -> dict:
             except ValueError:
                 pass
     for p in walk(d, "videoPrimaryInfoRenderer"):
-        if not row["제목"]:
-            row["제목"] = text_of(p.get("title"))
+        row["제목"] = text_of(p.get("title")) or row["제목"]
         if row["조회수"] is None:
             row["조회수"] = parse_count(text_of(next(walk(p.get("viewCount", {}), "viewCount"), None)))
         if row["업로드일"] is None:
@@ -290,11 +302,7 @@ def it_fetch_video(vid: str, base: dict) -> dict:
         if "comment" in text_of(h.get("title")).lower():
             row["댓글수"] = parse_count(text_of(h.get("contextualInfo")))
             break
-    if row["길이(초)"] is None:
-        for ov in walk(d, "lengthText"):
-            row["길이(초)"] = parse_length(text_of(ov))
-            if row["길이(초)"]:
-                break
+    # next 응답의 lengthText는 추천 영상 것이므로 쓰지 않는다 (쇼츠는 길이 미상으로 둔다)
     row["쇼츠"] = "Y" if base.get("탭") == "shorts" else ""
     return row
 
@@ -330,19 +338,19 @@ def collect_innertube(channel_url: str, limit: int | None, progress_csv: Path) -
     return df, meta
 
 
-def classify(title: str, tags: str) -> str:
+def classify(title: str, tags: str, is_short: bool = False) -> str:
     text = f"{title} {tags}".lower()
-    for name, pattern in CATEGORY_RULES:
+    for name, pattern in SHORTS_RULES if is_short else CATEGORY_RULES:
         if re.search(pattern, text):
             return name
-    return "G. 기타"
+    return "S4. 의견/소통/일상" if is_short else "H. 기타"
 
 
-def length_bucket(seconds) -> str:
-    if seconds is None:
-        return "미상"
-    if seconds <= 60:
+def length_bucket(seconds, is_short: bool = False) -> str:
+    if is_short or (seconds is not None and seconds <= 60):
         return "쇼츠(≤1분)"
+    if seconds is None or pd.isna(seconds):
+        return "미상"
     if seconds <= 600:
         return "단편(1~10분)"
     if seconds <= 1800:
@@ -383,8 +391,8 @@ def collect(channel_url: str, limit: int | None, progress_csv: Path) -> pd.DataF
 def analyze(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     df = df.copy()
     df["업로드일"] = pd.to_datetime(df["업로드일"], errors="coerce")
-    df["카테고리"] = [classify(str(t), str(g)) for t, g in zip(df["제목"], df["태그"].fillna(""))]
-    df["길이구간"] = df["길이(초)"].apply(length_bucket)
+    df["카테고리"] = [classify(str(t), str(g), sh == "Y") for t, g, sh in zip(df["제목"], df["태그"].fillna(""), df["쇼츠"].fillna(""))]
+    df["길이구간"] = [length_bucket(sec, sh == "Y") for sec, sh in zip(df["길이(초)"], df["쇼츠"].fillna(""))]
     df["연월"] = df["업로드일"].dt.to_period("M").astype(str)
     df = df.sort_values("업로드일", ascending=False)
 
@@ -401,9 +409,14 @@ def analyze(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         df.groupby("길이구간").agg(영상수=("video_id", "count"), 평균조회수=("조회수", "mean"), 평균좋아요=("좋아요", "mean")).round(0).reset_index()
     )
     top20 = df.sort_values("조회수", ascending=False).head(20)[["제목", "업로드일", "조회수", "좋아요", "댓글수", "카테고리", "길이구간", "URL"]]
+    df["형식"] = df["쇼츠"].fillna("").map(lambda x: "쇼츠" if x == "Y" else "롱폼")
+    df["연도"] = df["업로드일"].dt.year
+    by_year = (
+        df.groupby(["연도", "형식"]).agg(업로드수=("video_id", "count"), 합계조회수=("조회수", "sum"), 평균조회수=("조회수", "mean"), 중앙값조회수=("조회수", "median")).round(0).reset_index()
+    )
 
-    cols = ["제목", "업로드일", "카테고리", "길이구간", "길이(초)", "조회수", "좋아요", "댓글수", "쇼츠", "태그", "URL", "설명"]
-    return {"영상목록": df[cols], "카테고리별": by_cat, "월별": by_month, "길이별": by_len, "TOP20": top20}
+    cols = ["제목", "업로드일", "형식", "카테고리", "길이구간", "길이(초)", "조회수", "좋아요", "댓글수", "태그", "URL", "설명"]
+    return {"영상목록": df[cols], "카테고리별": by_cat, "연도별": by_year, "월별": by_month, "길이별": by_len, "TOP20": top20}
 
 
 def write_summary(sheets: dict[str, pd.DataFrame], df: pd.DataFrame, handle: str, path: Path) -> None:
@@ -421,6 +434,9 @@ def write_summary(sheets: dict[str, pd.DataFrame], df: pd.DataFrame, handle: str
         f"- 총 조회수: {int(videos['조회수'].sum()):,}",
         f"- 영상당 평균 조회수: {int(videos['조회수'].mean()):,}",
         f"- 중앙값 조회수: {int(videos['조회수'].median()):,}",
+        "",
+        "## 연도별 (롱폼/쇼츠)",
+        sheets["연도별"].to_markdown(index=False),
         "",
         "## 카테고리별",
         sheets["카테고리별"].to_markdown(index=False),

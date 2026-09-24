@@ -52,4 +52,5 @@ python src/youtube_channel_analysis.py https://youtube.com/@theairbnbdataguy
   → 출력: output/유튜브_채널_<핸들>.xlsx, output/유튜브_채널_<핸들>_요약.md
 ```
 
-정성 분석 보고서: `output/유튜브_채널분석_theairbnbdataguy.md`
+분석 보고서: `output/유튜브_채널분석_theairbnbdataguy.md` (523편 전수 데이터 기반)
+필요 패키지: `pip install pandas openpyxl tabulate requests` (yt-dlp 백엔드 사용 시 `yt-dlp` 추가)
