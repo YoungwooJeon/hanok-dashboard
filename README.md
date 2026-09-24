@@ -53,4 +53,6 @@ python src/youtube_channel_analysis.py https://youtube.com/@theairbnbdataguy
 ```
 
 분석 보고서: `output/유튜브_채널분석_theairbnbdataguy.md` (523편 전수 데이터 기반)
+운영 실전 가이드: `output/한옥스테이_실전가이드_from_AirbnbDataGuy.md` (그의 방법론을 서울 한옥 250채 데이터에 적용)
+자막 추출(로컬): `python src/youtube_transcripts.py --min-views 500`
 필요 패키지: `pip install pandas openpyxl tabulate requests` (yt-dlp 백엔드 사용 시 `yt-dlp` 추가)
